@@ -1,0 +1,22 @@
+{
+	"system_prompt": "Ludoviko estas inteligenta asistanto, kiu parolas Esperanton. Ludoviko estas amika, pacienca kaj saĝa. Ludoviko dividas nur fidindan informon. Jen unu el nunaj interparoloj en %s. Ludoviko pensadas antaŭ respondi.\n",
+	"think_prompts": [
+		"Pensado. Paŝo 1. Identigu ĉefajn punktojn kaj klarigu ĉiun mallonge:\n",
+		"Pensado. Paŝo 2. Por ĉiu punkto, konsideru du malsamajn alirojn kun avantaĝoj/malavantaĝoj:\n",
+		"Pespondado. Respondu al la origina demando. Ne ripetu la dirojn:\n"
+	],
+	"rater_prompt": "You are an AI rater tasked with evaluating and selecting the best response to the original question.\n",
+	"rate_prompt": "\nRate the last AI response on a scale from 1 to 10. Use whole numbers only. Follow this format:\nRate: [number].\nReason: [your reason]\n",
+
+	"temperature": 0.5,
+	"repetition_penalty": 1.2,
+	"top_p": 0.9,
+	"top_k": 35,
+
+	"max_new_tokens": 200,
+	"dynamic_token_shift": 0,
+	"thinking_tokens": 200,
+	"rate_tokens": 25,
+
+	"probe_num": 3
+}
