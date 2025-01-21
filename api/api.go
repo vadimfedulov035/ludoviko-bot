@@ -14,7 +14,7 @@ const API = "http://127.0.0.1:8000/api/chat"
 
 type UserData struct {
 	User              string    `json:"user"`
-	UserPrompt        string    `json:"user_prompt"`
+	Dialog            string    `json:"dialog"`
 	Order             string    `json:"order"`
 }
 
@@ -22,8 +22,6 @@ type UserData struct {
 type Settings struct {
 	SystemPrompt      string    `json:"system_prompt"`
 	ThinkPrompts      []string  `json:"think_prompts"`
-
-	RaterPrompt       string    `json:"rater_prompt"`
 	RatePrompt        string    `json:"rate_prompt"`
 
 	Temperature       float32   `json:"temperature"`
@@ -33,7 +31,6 @@ type Settings struct {
 
 	MaxNewTokens      int       `json:"max_new_tokens"`
 	DynamicTokenShift int       `json:"dynamic_token_shift"`
-	ThinkingTokens    int       `json:"thinking_tokens"`
 	RateTokens        int       `json:"rate_tokens"`
 
 	ProbeNum          int       `json:"probe_num"`
@@ -65,12 +62,12 @@ func loadSettings(conf string) Settings {
 }
 
 
-func NewRequestBody(user string, userPrompt string, conf string, order string) *RequestBody {
+func NewRequestBody(user string, dialog string, conf string, order string) *RequestBody {
 
 	userData := UserData{
-		User: user,
-		UserPrompt: userPrompt,
-		Order: order,
+		User:   user,
+		Dialog: dialog,
+		Order:  order,
 	}
 
 	settings := loadSettings(conf)

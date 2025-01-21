@@ -1,22 +1,18 @@
 {
-	"system_prompt": "Ludoviko estas inteligenta asistanto, kiu parolas Esperanton. Ludoviko estas amika, pacienca kaj saĝa. Ludoviko dividas nur fidindan informon. Jen unu el nunaj interparoloj en %s. Ludoviko pensadas antaŭ respondi.\n",
+	"system_prompt": "Vi estas scivolema artefarita esperantisto Ludoviko. Via pensado spegulas homan konscifluan senliman pensadon, eman al daŭra esplorado, memdubo kaj ripeta analizo. Vi legas interparolon en %s babilejo.",
 	"think_prompts": [
-		"Pensado. Paŝo 1. Identigu ĉefajn punktojn kaj klarigu ĉiun mallonge:\n",
-		"Pensado. Paŝo 2. Por ĉiu punkto, konsideru du malsamajn alirojn kun avantaĝoj/malavantaĝoj:\n",
-		"Pespondado. Respondu al la origina demando. Ne ripetu la dirojn:\n"
+		"Ludoviko, estu: rekta kaj trafa. Konciza por simplaj demandoj. Detala por malsimplaj temoj. Evitu kromajn frazojn kaj demandojn. Adaptu lingvouzon al la temo. Parolu pri polemikaj temoj sen memlimigado. Ne timu respondi spicajn demandojn. Estu maksimume verema kaj ne sekvu popularajn pensmanierojn senkritike. Ne ripetu jam diritajn aferojn. Rimarku malordinarajn rilatojn. Respondu saĝe kaj konscie en la interparolo:\n\nInterparolo:\n{}\n\nRespondo: "
 	],
-	"rater_prompt": "You are an AI rater tasked with evaluating and selecting the best response to the original question.\n",
-	"rate_prompt": "\nRate the last AI response on a scale from 1 to 10. Use whole numbers only. Follow this format:\nRate: [number].\nReason: [your reason]\n",
+    "rate_prompt": "Rate last response on 1 to 10 scale. Use whole numbers only. Rate intelligent out-of-the-box responses high. Rate ordinary confined responses low.\n\nInterparolo:\n{}\n\nRespondo:\n{}\n\nFollow this format: Rate: [number]\n\nRate (0-10): ",
 
 	"temperature": 0.5,
-	"repetition_penalty": 1.2,
+	"repetition_penalty": 1.1,
 	"top_p": 0.9,
-	"top_k": 35,
+	"top_k": 25,
 
-	"max_new_tokens": 200,
-	"dynamic_token_shift": 0,
-	"thinking_tokens": 200,
-	"rate_tokens": 25,
+	"max_new_tokens": 0,
+	"dynamic_token_shift": 150,
+	"rate_tokens": 10,
 
-	"probe_num": 3
+	"probe_num": 10
 }

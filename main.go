@@ -25,7 +25,7 @@ type InitJSON struct {
 	Confs   []string `json:"confs"`
 	Orders  []string `json:"orders"`
 	History string   `json:"history"`
-	Limit   int      `json:"lim"`
+	Limit   int      `json:"limit"`
 }
 
 
@@ -44,12 +44,10 @@ func loadInitJSON(conf string) InitJSON {
 func getConfig(order string, confs []string, orders []string) string {
 	config := ""
 
-	for _, conf_temp := range(confs) {
-		for _, order_temp := range(orders) {
-			if order_temp == order {
-				config = conf_temp
-				break
-			}
+	for i := 0; i < len(confs); i++ {
+		if orders[i] == order {
+			config = confs[i]
+			break
 		}
 	}
 
@@ -61,20 +59,18 @@ func replyAI(bot *tg.BotAPI, msg *tg.Message,
 					chatHistory map[string]string, limit int,
 					conf string, order string) map[string]string {
     user := msg.From.UserName
-	var userPrompt string
+	var dialog string
 	if order != "" {
-		userPrompt = msg.Text
+		dialog = messaging.StripOrder(msg, order)
 	} else {
-		userPrompt = memory.Remember(msg, chatHistory, limit)
+		dialog = memory.Remember(msg, chatHistory, limit)
 	}
-	chatDesc := msg.Chat.Description
-
 	if chatHistory == nil {
 		chatHistory = make(map[string]string)
 	}
 
-	requestBody := api.NewRequestBody(user, userPrompt, conf, order)
-	requestBody.Settings.SystemPrompt = fmt.Sprintf(requestBody.Settings.SystemPrompt, chatDesc)
+	requestBody := api.NewRequestBody(user, dialog, conf, order)
+	requestBody.Settings.SystemPrompt = fmt.Sprintf(requestBody.Settings.SystemPrompt, msg.Chat.Title)
 
 	text, err := api.SendToAPI(requestBody)
 	if err != nil {
@@ -128,6 +124,7 @@ func main() {
 
 		isAsked, isPrivate, isOrdered := messaging.IsToReply(msg, &bot.Self,
 															Admins, Orders)
+
 		if !isAsked {
 			continue
 		}

@@ -29,6 +29,21 @@ func GetOrder(text string, orders []string) (string, bool) {
 }
 
 
+func StripOrder(msg *tg.Message, order string) string {
+	var dialog string
+	if msg.ReplyToMessage != nil {
+		if msg.ReplyToMessage.Text != "" {
+			dialog = msg.ReplyToMessage.Text
+		} else if msg.ReplyToMessage.Caption != "" {
+			dialog = msg.ReplyToMessage.Caption
+		}
+	}
+	dialog += msg.Text
+	dialog = strings.Replace(dialog, order, "", -1)
+	return dialog
+}
+
+
 func IsToReply(msg *tg.Message, self *tg.User, admins []string, orders []string) (bool, bool, bool) {
     chat := msg.Chat
     user := msg.From.UserName
@@ -40,6 +55,9 @@ func IsToReply(msg *tg.Message, self *tg.User, admins []string, orders []string)
     isReplied := repliedMsg != nil && repliedMsg.From.ID == self.ID
     isMentioned := strings.Contains(msg.Text, self.UserName)
     _, isOrdered := GetOrder(msg.Text, orders)
+	if strings.Contains(msg.Text, "/q") {
+		isOrdered = false
+	}
 
     isAdmin := slices.Contains(admins, user)
 

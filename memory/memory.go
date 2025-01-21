@@ -3,6 +3,7 @@ package memory
 
 import (
 	"log"
+	"fmt"
     "strings"
 
     tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -57,7 +58,7 @@ func Remember(msg *tg.Message, chatHistory map[string]string, lim int) string {
 	for i := 0; i < lim - 2; i++ {
         v, ok := chatHistory[lastLine]
         if ok && v != "" {
-			log.Printf("%d messages remembered", i + 1 + 2)
+			log.Printf("%d messages remembered", i + 1)
             lines = append(lines, v)
             lastLine = v
         } else {
@@ -67,6 +68,7 @@ func Remember(msg *tg.Message, chatHistory map[string]string, lim int) string {
 
 	dialog := reverse(lines)
 
+	fmt.Println(dialog)
+
     return dialog
 }
-
