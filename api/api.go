@@ -4,80 +4,77 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"strings"
-	"os"
 	"log"
+	"net/http"
+	"os"
+	"strings"
 )
-
 
 const API = "http://127.0.0.1:8000/api/chat"
 
-
 type Settings struct {
-	SystemPrompt      string    `json:"system_prompt"`
-	ThinkPrompts      []string  `json:"think_prompts"`
-	RatePrompt        string    `json:"rate_prompt"`
+	SystemPrompt string   `json:"system_prompt"`
+	ThinkPrompts []string `json:"think_prompts"`
+	RatePrompt   string   `json:"rate_prompt"`
 
-	Temperature       float32   `json:"temperature"`
-	RepetitionPenalty float32   `json:"repetition_penalty"`
-	TopP              float32   `json:"top_p"`
-	TopK              int       `json:"top_k"`
+	Temperature       float32 `json:"temperature"`
+	RepetitionPenalty float32 `json:"repetition_penalty"`
+	TopP              float32 `json:"top_p"`
+	TopK              int     `json:"top_k"`
 
-	MaxNewTokens      int       `json:"max_new_tokens"`
-	DynamicTokenShift int       `json:"dynamic_token_shift"`
-	RateTokens        int       `json:"rate_tokens"`
+	MaxNewTokens      int `json:"max_new_tokens"`
+	DynamicTokenShift int `json:"dynamic_token_shift"`
+	RateTokens        int `json:"rate_tokens"`
 
-	BatchSize         int       `json:"batch_size"`
-	RateNum           int       `json:"rate_num"`
+	BatchSize int `json:"batch_size"`
+	RateNum   int `json:"rate_num"`
 }
-
 
 type RequestBody struct {
-	Dialog   []string  `json:"dialog"`
-	Settings Settings  `json:"settings"`
+	Dialog   []string `json:"dialog"`
+	Settings Settings `json:"settings"`
 }
-
 
 type ResponseBody struct {
 	Response string `json:"response"`
 }
 
-
-func loadSettings(conf string) Settings {
-    var settings Settings
-    data, err := os.ReadFile(conf)
-    if err != nil {
-        panic(err)
-    }
-	err = json.Unmarshal(data, &settings)
-	if err != nil {
-		panic(err)
-	}
-    return settings
-}
-
-
 func newRequestBody(dialog []string, conf string) *RequestBody {
+
+	loadSettings := func(conf string) Settings {
+		var settings Settings
+		data, err := os.ReadFile(conf)
+		if err != nil {
+			panic(err)
+		}
+		err = json.Unmarshal(data, &settings)
+		if err != nil {
+			panic(err)
+		}
+		return settings
+	}
+
 	return &RequestBody{
 		Dialog:   dialog,
-		Settings: loadSettings(conf), 
+		Settings: loadSettings(conf),
 	}
 }
 
-
 func sendRequestBody(requestBody *RequestBody) (string, error) {
+	// encode request body to JSON
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return "", err
 	}
 
+	// make new POST request with JSON data
 	req, err := http.NewRequest("POST", API, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	// set HTTP client
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -85,11 +82,13 @@ func sendRequestBody(requestBody *RequestBody) (string, error) {
 	}
 	defer resp.Body.Close()
 
+	// check status; print status code if error
 	if resp.StatusCode != http.StatusOK {
 		error_msg := "Status code %d"
 		return "", fmt.Errorf(error_msg, resp.StatusCode)
 	}
 
+	// decode response body
 	var responseBody ResponseBody
 	err = json.NewDecoder(resp.Body).Decode(&responseBody)
 	if err != nil {
@@ -99,23 +98,20 @@ func sendRequestBody(requestBody *RequestBody) (string, error) {
 	return responseBody.Response, nil
 }
 
-
-func Send(dialog []string, config string, title string) string {
+// outer handler for request
+func Send(dialog []string, config string, chatTitle string) string {
 	// prepare request body
-    requestBody := newRequestBody(dialog, config)
+	requestBody := newRequestBody(dialog, config)
 
-	// add chat title to prompt if space reserved
-	if title == "" {
-		title = "privata interparolo"
-	}
+	// add chat title to system prompt if space reserved
 	prompt := requestBody.Settings.SystemPrompt
 	if strings.Contains(prompt, "%s") {
-		prompt = fmt.Sprintf(prompt, title)
+		prompt = fmt.Sprintf(prompt, chatTitle)
 	}
-    requestBody.Settings.SystemPrompt = prompt
+	requestBody.Settings.SystemPrompt = prompt
 
 	// send request body
-    text, err := sendRequestBody(requestBody)
+	text, err := sendRequestBody(requestBody)
 	if err != nil {
 		log.Printf("[API] Sending: %v", err)
 	}

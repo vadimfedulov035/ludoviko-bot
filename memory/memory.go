@@ -1,20 +1,18 @@
 package memory
 
-
 import (
-	"os"
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"log"
-    "strings"
-	"time"
+	"os"
+	"strings"
 	"sync"
+	"time"
 
-    tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-    "ludoviko-bot/messaging"
+	"ludoviko-bot/messaging"
 )
-
 
 type MessageEntry struct {
 	Message   string    `json:"msg"`
@@ -24,46 +22,41 @@ type ChatHistory map[string]MessageEntry
 type BotHistory map[int64]ChatHistory
 type History map[string]BotHistory
 
-
 type ChatInfo struct {
-    ChatsHistory ChatHistory
+	ChatsHistory ChatHistory
 	CID          int64
-    Order        string
+	Order        string
 	Config       string
-    MemoryLimit  int
+	MemoryLimit  int
 }
 
-
 func NewChatInfo(h ChatHistory, i int64, o string, c string, l int) *ChatInfo {
-    return &ChatInfo {
-        ChatsHistory: h,
+	return &ChatInfo{
+		ChatsHistory: h,
 		CID:          i,
 		Order:        o,
 		Config:       c,
 		MemoryLimit:  l,
-    }
+	}
 }
-
 
 // gets chat history; creates if none
 func GetChatHistory(botHistory BotHistory, id int64) ChatHistory {
-    if _, ok := botHistory[id]; !ok {
-        botHistory[id] = make(ChatHistory)
-    }
-    chatHistory := botHistory[id]
+	if _, ok := botHistory[id]; !ok {
+		botHistory[id] = make(ChatHistory)
+	}
+	chatHistory := botHistory[id]
 	return chatHistory
 }
 
-
 // gets bot history in any case; creates if none
 func GetBotHistory(history History, botName string) BotHistory {
-    if _, ok := history[botName]; !ok {
-        history[botName] = make(BotHistory)
-    }
-    botHistory := history[botName]
+	if _, ok := history[botName]; !ok {
+		history[botName] = make(BotHistory)
+	}
+	botHistory := history[botName]
 	return botHistory
 }
-
 
 // converts message to string with conditions
 func toString(bot *tg.BotAPI, msg *tg.Message, order string) string {
@@ -77,21 +70,20 @@ func toString(bot *tg.BotAPI, msg *tg.Message, order string) string {
 
 	// replace bot username to the first name
 	botName, botFirstName := bot.Self.UserName, bot.Self.FirstName
-	text = strings.Replace(text, "@" + botName, botFirstName + ",", -1)
+	text = strings.Replace(text, "@"+botName, botFirstName+",", -1)
 
 	// strip order if any; avoid dialog structure
 	if order != "" {
 		text = strings.Replace(text, order, "", -1)
 		result = text
-	// contruct dialog
+		// contruct dialog
 	} else {
 		userName := messaging.GetUserName(msg)
 		result = userName + ": " + text
 	}
 
-    return result
+	return result
 }
-
 
 // adds message content to chat's info history
 func Add(tgInfo *messaging.TgInfo, chatInfo *ChatInfo) (string, string) {
@@ -99,12 +91,12 @@ func Add(tgInfo *messaging.TgInfo, chatInfo *ChatInfo) (string, string) {
 	chatHistory, order := chatInfo.ChatsHistory, chatInfo.Order
 
 	// get related lines
-    prevLine := toString(bot, msg.ReplyToMessage, order)
+	prevLine := toString(bot, msg.ReplyToMessage, order)
 	lastLine := toString(bot, msg, order)
 
 	// add related lines to history if got both
-	if prevLine != "" {  // lastLine non-empty (message checked)
-		chatHistory[lastLine] = MessageEntry {
+	if prevLine != "" { // lastLine non-empty (message checked)
+		chatHistory[lastLine] = MessageEntry{
 			Message:   prevLine,
 			Timestamp: time.Now(),
 		}
@@ -113,7 +105,6 @@ func Add(tgInfo *messaging.TgInfo, chatInfo *ChatInfo) (string, string) {
 	return prevLine, lastLine
 }
 
-
 // gets dialog from chat's info history
 func Get(prevLine string, lastLine string, chatInfo *ChatInfo) []string {
 	chatHistory := chatInfo.ChatsHistory
@@ -121,25 +112,25 @@ func Get(prevLine string, lastLine string, chatInfo *ChatInfo) []string {
 
 	// append last line (and return if needed)
 	lines := []string{lastLine}
-	if prevLine == "" {  // lastLine non-empty (message checked)
+	if prevLine == "" { // lastLine non-empty (message checked)
 		return lines
 	}
 	// append previous line
-    lines = append(lines, prevLine)
+	lines = append(lines, prevLine)
 
 	// append previous lines
-    lastLine = prevLine
-	for i := 0; i < memLim - 2; i++ {
-        if messageEntry, ok := chatHistory[lastLine]; ok {
-			log.Printf("%d messages remembered", i + 1)
+	lastLine = prevLine
+	for i := 0; i < memLim-2; i++ {
+		if messageEntry, ok := chatHistory[lastLine]; ok {
+			log.Printf("%d messages remembered", i+1)
 
 			prevLine = messageEntry.Message
-            lines = append(lines, prevLine)
-            lastLine = prevLine
-        } else {
-            break
-        }
-    }
+			lines = append(lines, prevLine)
+			lastLine = prevLine
+		} else {
+			break
+		}
+	}
 
 	// reverse the lines to get a dialog
 	reverse := func(lines []string) []string {
@@ -150,9 +141,8 @@ func Get(prevLine string, lastLine string, chatInfo *ChatInfo) []string {
 	}
 	dialog := reverse(lines)
 
-    return dialog
+	return dialog
 }
-
 
 // cleans all day old lines in every chat history
 func CleanHistory(history History) {
@@ -163,7 +153,7 @@ func CleanHistory(history History) {
 			var linesToDelete []string
 
 			for line, messageEntry := range chatHistory {
-				if currentTime.Sub(messageEntry.Timestamp) > 24 * time.Hour {
+				if currentTime.Sub(messageEntry.Timestamp) > 24*time.Hour {
 					linesToDelete = append(linesToDelete, line)
 				}
 			}
@@ -175,36 +165,34 @@ func CleanHistory(history History) {
 	}
 }
 
-
 // loads history (for share use)
 func LoadHistory(source string) History {
 	var history History
 
 	// open file
-    file, err := os.OpenFile(source, os.O_RDONLY|os.O_CREATE, 0644)
-    if err != nil {
-        panic(fmt.Errorf("[OS error] History file opening: %v", err))
-    }
-    defer file.Close()
+	file, err := os.OpenFile(source, os.O_RDONLY|os.O_CREATE, 0644)
+	if err != nil {
+		panic(fmt.Errorf("[OS error] History file opening: %v", err))
+	}
+	defer file.Close()
 
-	// read file 
-    data, err := os.ReadFile(source)
-    if err != nil {
-        panic(fmt.Errorf("[OS error] History reading: %v", err))
-    }
+	// read file
+	data, err := os.ReadFile(source)
+	if err != nil {
+		panic(fmt.Errorf("[OS error] History reading: %v", err))
+	}
 
 	// decode JSON to history
-    err = json.Unmarshal(data, &history)
-    if err != nil {
-        log.Println("[OS] History will be created")
+	err = json.Unmarshal(data, &history)
+	if err != nil {
+		log.Println("[OS] History will be created")
 		history = History{}
-    } else {
+	} else {
 		log.Println("[OS] History loaded")
 	}
 
-    return history
+	return history
 }
-
 
 // saves history with mutex locking
 func SaveHistory(dest string, history History, mu *sync.Mutex) {
@@ -212,23 +200,23 @@ func SaveHistory(dest string, history History, mu *sync.Mutex) {
 	defer mu.Unlock()
 
 	// open file
-    file, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-    if err != nil {
-        panic(fmt.Errorf("[OS error] History file opening: %v", err))
-    }
-    defer file.Close()
+	file, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		panic(fmt.Errorf("[OS error] History file opening: %v", err))
+	}
+	defer file.Close()
 
 	// encode history into JSON
-    data, err := json.Marshal(history)
-    if err != nil {
-        panic(fmt.Errorf("[OS error] History marshalling: %v", err))
-    }
+	data, err := json.Marshal(history)
+	if err != nil {
+		panic(fmt.Errorf("[OS error] History marshalling: %v", err))
+	}
 
 	// write JSON data to file
-    _, err = file.Write(data)
-    if err != nil {
-        panic(fmt.Errorf("[OS error] History writing: %v", err))
-    }
+	_, err = file.Write(data)
+	if err != nil {
+		panic(fmt.Errorf("[OS error] History writing: %v", err))
+	}
 
-    log.Println("[OS] History written")
+	log.Println("[OS] History written")
 }
