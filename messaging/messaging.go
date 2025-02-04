@@ -2,74 +2,151 @@ package messaging
 
 
 import (
+	"fmt"
     "context"
     "strings"
     "slices"
     "time"
     "log"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
     tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 
-func GetOrder(text string, orders []string) (string, bool) {
+type TgInfo struct {
+    Bot    *tg.BotAPI
+    Msg    *tg.Message
+}
+
+
+func NewTgInfo(bot *tg.BotAPI, msg *tg.Message) *TgInfo {
+	return &TgInfo {
+		Bot: bot,
+		Msg: msg,
+	}
+}
+
+
+// transforms general config to the custome one
+func GetCustomConfig(generalConfig string, order string) string {
+	configPostfix := strings.Replace(order, "/", "_", 1)
+	customConfig := fmt.Sprintf(generalConfig, configPostfix)
+	return customConfig
+}
+
+
+// gets message text if any; returns success flag
+func GetMsgText(msg *tg.Message) (string, bool) {
+	if msg == nil {
+		return "", false
+	}
+	if msg.Text != "" { 
+		return msg.Text, true
+	}
+	if msg.Caption != "" {
+		return msg.Caption, true
+	}
+	return "", false
+}
+
+
+// gets user name if any; or "Anonymous"
+func GetUserName(msg *tg.Message) string {
+    var userName string
+	// bot -> first name
+	if msg.From.IsBot {
+		userName = msg.From.FirstName
+	// user -> capitalized username
+	} else {
+		caser := cases.Title(language.English)
+		userName = caser.String(msg.From.UserName)
+	}
+	// anon -> Anonymous
+    if userName == "" {
+        userName = "Anonymous"
+    }
+	return userName
+}
+
+
+// gets chat title if any; or "User's chat"
+func GetChatTitle(msg *tg.Message) string {
+	// public chat -> chat title
+	chatName := msg.Chat.Title
+	// private chat -> user's chat
+	if chatName == "" {
+		chatName = fmt.Sprintf("%s's chat", GetUserName(msg))
+	}
+	return chatName
+}
+
+
+// gets chat ID if any; or gets user ID
+func GetCID(msg *tg.Message) int64 {
+	var cid int64
+	// get chat ID
+	if msg.Chat != nil {
+		cid = msg.Chat.ID
+	// get user ID
+	} else {
+		cid = msg.From.ID
+	}
+	return cid
+}
+
+
+// gets order if any
+func getOrder(text string, orders []string) (string) {
     order := ""
-
     for _, order := range(orders) {
-        if order == "" {
-            continue
-        }
-
         if strings.Contains(text, order) {
-            return order, true
+            return order
         }
     }
-
-    return order, false
+    return order
 }
 
 
-func StripOrder(msg *tg.Message, order string) string {
-	var dialog string
-	if msg.ReplyToMessage != nil {
-		if msg.ReplyToMessage.Text != "" {
-			dialog = msg.ReplyToMessage.Text
-		} else if msg.ReplyToMessage.Caption != "" {
-			dialog = msg.ReplyToMessage.Caption
-		}
-	}
-	dialog += msg.Text
-	dialog = strings.Replace(dialog, order, "", -1)
-	return dialog
-}
+// checks if the bot is asked; gets order if any
+func Inspect(tgInfo *TgInfo, admins []string, orders []string) (bool, string) {
+	bot, msg := tgInfo.Bot, tgInfo.Msg
 
+	self := bot.Self
+	botName, botID := self.UserName, self.ID
 
-func IsToReply(msg *tg.Message, self *tg.User, admins []string, orders []string) (bool, bool, bool) {
     chat := msg.Chat
-    user := msg.From.UserName
-    repliedMsg := msg.ReplyToMessage
+    userName := GetUserName(msg)
+	text, _ := GetMsgText(msg)
+
+    replied := msg.ReplyToMessage
+	var repliedID int64 = -1
+	if replied != nil {
+		repliedID = replied.From.ID
+	}
+
+    order := getOrder(text, orders)
 
     isPublic := chat.IsGroup() || chat.IsSuperGroup()
     isPrivate := chat.IsPrivate()
 
-    isReplied := repliedMsg != nil && repliedMsg.From.ID == self.ID
-    isMentioned := strings.Contains(msg.Text, self.UserName)
-    _, isOrdered := GetOrder(msg.Text, orders)
-	if strings.Contains(msg.Text, "/q") {
-		isOrdered = false
-	}
-
-    isAdmin := slices.Contains(admins, user)
+    isReplied := repliedID == botID
+    isMentioned := strings.Contains(text, botName)
+	isOrdered := order != ""
+    isAdmin := slices.Contains(admins, userName)
 
     isAskedPublicly := isPublic && (isReplied || isMentioned || isOrdered)
     isAskedPrivately := isPrivate && isAdmin
 
     isAsked := isAskedPublicly || isAskedPrivately
 
-    return isAsked, isAskedPrivately, isOrdered
+    return isAsked, order
 }
 
 
+// tries to reply to message with text; simply sends message on failure
 func Reply(bot *tg.BotAPI, msg *tg.Message, text string) *tg.Message {
 
     msgConf := tg.NewMessage(msg.Chat.ID, text)
@@ -88,20 +165,21 @@ func Reply(bot *tg.BotAPI, msg *tg.Message, text string) *tg.Message {
 }
 
 
-func Typing(bot *tg.BotAPI, id int64, ctx context.Context) {
-    ticker := time.NewTicker(5 * time.Second)
-    defer ticker.Stop()
+// types every 3 seconds until context done
+func Typing(ctx context.Context, bot *tg.BotAPI, id int64) {
+    t := time.NewTicker(3 * time.Second)
+	defer t.Stop()
 
-    for {
-        select {
-        case <-ticker.C:
-            actConf := tg.NewChatAction(id, "typing")
-            _, err := bot.Request(actConf)
-            if err != nil {
-                log.Printf("[Telegram] Action: %v", err)
-            }
-        case <-ctx.Done():
-            return
-        }
-    }
+	for {
+		select {
+		case <-t.C:
+			actConf := tg.NewChatAction(id, "typing")
+			_, err := bot.Request(actConf)
+			if err != nil {
+				log.Printf("[Telegram] Action: %v", err)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }

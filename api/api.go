@@ -5,18 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"os"
+	"log"
 )
 
 
 const API = "http://127.0.0.1:8000/api/chat"
-
-
-type UserData struct {
-	User              string    `json:"user"`
-	Dialog            string    `json:"dialog"`
-	Order             string    `json:"order"`
-}
 
 
 type Settings struct {
@@ -33,13 +28,14 @@ type Settings struct {
 	DynamicTokenShift int       `json:"dynamic_token_shift"`
 	RateTokens        int       `json:"rate_tokens"`
 
-	ProbeNum          int       `json:"probe_num"`
+	BatchSize         int       `json:"batch_size"`
+	RateNum           int       `json:"rate_num"`
 }
 
 
 type RequestBody struct {
-	UserData          UserData  `json:"user_data"`
-	Settings          Settings  `json:"settings"`
+	Dialog   []string  `json:"dialog"`
+	Settings Settings  `json:"settings"`
 }
 
 
@@ -62,41 +58,26 @@ func loadSettings(conf string) Settings {
 }
 
 
-func NewRequestBody(user string, dialog string, conf string, order string) *RequestBody {
-
-	userData := UserData{
-		User:   user,
-		Dialog: dialog,
-		Order:  order,
+func newRequestBody(dialog []string, conf string) *RequestBody {
+	return &RequestBody{
+		Dialog:   dialog,
+		Settings: loadSettings(conf), 
 	}
-
-	settings := loadSettings(conf)
-
-	requestBody := &RequestBody{
-		UserData: userData,
-		Settings: settings,  
-	}
-
-	return requestBody
 }
 
 
-func SendToAPI(requestBody *RequestBody) (string, error) {
-
-	// unmarshal request body
+func sendRequestBody(requestBody *RequestBody) (string, error) {
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return "", err
 	}
 
-	// make request
 	req, err := http.NewRequest("POST", API, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// send request and get response
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -104,13 +85,11 @@ func SendToAPI(requestBody *RequestBody) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	// check response status
 	if resp.StatusCode != http.StatusOK {
-		error_msg := "[API] Status code: %d"
+		error_msg := "Status code %d"
 		return "", fmt.Errorf(error_msg, resp.StatusCode)
 	}
 
-	// get response
 	var responseBody ResponseBody
 	err = json.NewDecoder(resp.Body).Decode(&responseBody)
 	if err != nil {
@@ -118,4 +97,28 @@ func SendToAPI(requestBody *RequestBody) (string, error) {
 	}
 
 	return responseBody.Response, nil
+}
+
+
+func Send(dialog []string, config string, title string) string {
+	// prepare request body
+    requestBody := newRequestBody(dialog, config)
+
+	// add chat title to prompt if space reserved
+	if title == "" {
+		title = "privata interparolo"
+	}
+	prompt := requestBody.Settings.SystemPrompt
+	if strings.Contains(prompt, "%s") {
+		prompt = fmt.Sprintf(prompt, title)
+	}
+    requestBody.Settings.SystemPrompt = prompt
+
+	// send request body
+    text, err := sendRequestBody(requestBody)
+	if err != nil {
+		log.Printf("[API] Sending: %v", err)
+	}
+
+	return text
 }
