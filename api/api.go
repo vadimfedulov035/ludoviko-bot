@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const API = "http://127.0.0.1:8000/api/chat"
+const API = "http://0.0.0.0:8000/api/chat"
 
 type Settings struct {
 	SystemPrompt string   `json:"system_prompt"`
@@ -26,8 +26,8 @@ type Settings struct {
 	DynamicTokenShift int `json:"dynamic_token_shift"`
 	RateTokens        int `json:"rate_tokens"`
 
-	BatchSize int `json:"batch_size"`
-	RateNum   int `json:"rate_num"`
+	RespBatchSize     int `json:"resp_batch_size"`
+	RateBatchNum      int `json:"rate_batch_num"`
 }
 
 type RequestBody struct {
@@ -39,11 +39,11 @@ type ResponseBody struct {
 	Response string `json:"response"`
 }
 
-func newRequestBody(dialog []string, conf string) *RequestBody {
+func newRequestBody(dialog []string, config string) *RequestBody {
 
-	loadSettings := func(conf string) Settings {
+	loadSettings := func(config string) Settings {
 		var settings Settings
-		data, err := os.ReadFile(conf)
+		data, err := os.ReadFile(config)
 		if err != nil {
 			panic(err)
 		}
@@ -56,7 +56,7 @@ func newRequestBody(dialog []string, conf string) *RequestBody {
 
 	return &RequestBody{
 		Dialog:   dialog,
-		Settings: loadSettings(conf),
+		Settings: loadSettings(config),
 	}
 }
 

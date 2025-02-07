@@ -10,12 +10,12 @@ import (
 
 	tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"ludoviko-bot/api"
-	"ludoviko-bot/memory"
-	"ludoviko-bot/messaging"
+	"tg-handler/api"
+	"tg-handler/memory"
+	"tg-handler/messaging"
 )
 
-const InitConf = "./init.json"
+const InitConf = "./init/init.json"
 
 type InitJSON struct {
 	KeysAPI     []string            `json:"keysAPI"`
@@ -26,14 +26,16 @@ type InitJSON struct {
 	MemoryLimit int                 `json:"memory_limit"`
 }
 
-func loadInitJSON(conf string) *InitJSON {
+func loadInitJSON(config string) *InitJSON {
 	var initJSON InitJSON
 
-	data, err := os.ReadFile(conf)
+	// read JSON data from file
+	data, err := os.ReadFile(config)
 	if err != nil {
 		panic(err)
 	}
 
+	// decode JSON data to InitJSON
 	err = json.Unmarshal(data, &initJSON)
 	if err != nil {
 		panic(err)
@@ -42,44 +44,43 @@ func loadInitJSON(conf string) *InitJSON {
 	return &initJSON
 }
 
-func reply(tgInfo *messaging.TgInfo, chatInfo *memory.ChatInfo) {
-	bot, msg := tgInfo.Bot, tgInfo.Msg
-	cid, config := chatInfo.CID, chatInfo.Config
-
-	chatName := msg.Chat.Title
-
+func reply(tgInfo *messaging.TgInfo, chatInfo *memory.ChatInfo, mu *sync.RWMutex) {
 	// type until reply
 	ctx, cancel := context.WithCancel(context.Background())
-	go messaging.Typing(ctx, bot, cid)
+	go messaging.Typing(ctx, tgInfo)
 	defer cancel()
 
-	// add user response to history
-	prevLine, lastLine := memory.Add(tgInfo, chatInfo)
-
-	// get dialog
-	dialog := memory.Get(prevLine, lastLine, chatInfo)
+	var dialog []string
+	// add message pair to history if replied message exists, return as lines
+	lines := memory.Add(tgInfo, chatInfo, mu)
+	// get dialog going backwards in history via reply chain (2 lines)
+	if len(lines) > 1 {
+		dialog = memory.Get(lines, chatInfo, mu)
+	} else {
+		dialog = lines // else dialog is a new chain message (1 line)
+	}
 
 	// send dialog to API and reply with received text
-	text := api.Send(dialog, config, chatName)
-	resp := messaging.Reply(bot, msg, text)
+	text := api.Send(dialog, chatInfo.Config, tgInfo.Msg.Chat.Title)
+	resp := messaging.Reply(tgInfo, text)
 
-	// add bot response to history
-	tgInfo = messaging.NewTgInfo(bot, resp)
-	memory.Add(tgInfo, chatInfo)
+	// add response pair to history
+	tgInfo.Msg = resp
+	memory.Add(tgInfo, chatInfo, mu)
 }
 
-func start(i int, initJSON *InitJSON, history memory.History, mu *sync.Mutex) {
+func start(i int, initJSON *InitJSON, history memory.History, mu *sync.RWMutex) {
+	// start bot from specific keyAPI
 	keysAPI := initJSON.KeysAPI
-
-	// start bot
 	bot, err := tg.NewBotAPI(keysAPI[i])
 	if err != nil {
 		panic(err)
 	}
+	// log authorization
 	botName := bot.Self.UserName
 	log.Printf("Authorized on account %s", botName)
 
-	// get base constants
+	// get general constants
 	Admins := initJSON.Admins
 	Orders := initJSON.Orders[botName]
 	MemLim := initJSON.MemoryLimit
@@ -90,41 +91,40 @@ func start(i int, initJSON *InitJSON, history memory.History, mu *sync.Mutex) {
 	BotHistory := memory.GetBotHistory(history, botName)
 	Config := filepath.Join(ConfigPath, botName+"%s.json")
 
-	// preemptively clean history
-	memory.CleanHistory(history)
-	memory.SaveHistory(HistoryPath, history, mu)
-
+	// start update channel
 	u := tg.NewUpdate(0)
 	u.Timeout = 30
 	updates := bot.GetUpdatesChan(u)
 	for update := range updates {
 		msg := update.Message
 
-		// check if message is not null, has text/caption
+		// check if message is valid
 		_, ok := messaging.GetMsgText(msg)
 		if !ok {
 			continue
 		}
 
-		// check if message is to current bot (+ tgInfo)
-		tgInfo := messaging.NewTgInfo(bot, msg)
+		// get Chat ID -> tgInfo
+		cid := messaging.GetCID(msg)
+		tgInfo := messaging.NewTgInfo(bot, msg, cid)
+
+		// check if message is to current bot, log success
 		isAsked, order := messaging.Inspect(tgInfo, Admins, Orders)
 		if !isAsked {
 			continue
 		}
 		log.Printf("%s got message", botName)
 
-		// get chat history, custom bot config (+ chatInfo)
-		cid := messaging.GetCID(msg)
+		// get chat history, custom bot config -> chatInfo
 		chatHistory := memory.GetChatHistory(BotHistory, cid)
 		config := messaging.GetCustomConfig(Config, order)
-		chatInfo := memory.NewChatInfo(chatHistory, cid, order, config, MemLim)
+		chatInfo := memory.NewChatInfo(chatHistory, config, order, MemLim)
 
 		// reply with all info
-		reply(tgInfo, chatInfo)
+		reply(tgInfo, chatInfo, mu)
 
 		// clean and save history
-		memory.CleanHistory(history)
+		memory.CleanHistory(history, mu)
 		memory.SaveHistory(HistoryPath, history, mu)
 	}
 }
@@ -139,7 +139,7 @@ func main() {
 
 	// load shared history and mutex
 	history := memory.LoadHistory(HistoryPath)
-	var mu sync.Mutex
+	var mu sync.RWMutex
 
 	// start all bots with shared history and mutex
 	for i := range KeysAPI {

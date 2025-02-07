@@ -11,7 +11,7 @@ import (
 
 	tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"ludoviko-bot/messaging"
+	"tg-handler/messaging"
 )
 
 type MessageEntry struct {
@@ -24,23 +24,20 @@ type History map[string]BotHistory
 
 type ChatInfo struct {
 	ChatsHistory ChatHistory
-	CID          int64
-	Order        string
 	Config       string
+	Order        string
 	MemoryLimit  int
 }
 
-func NewChatInfo(h ChatHistory, i int64, o string, c string, l int) *ChatInfo {
+func NewChatInfo(h ChatHistory, conf string, ord string, lim int) *ChatInfo {
 	return &ChatInfo{
 		ChatsHistory: h,
-		CID:          i,
-		Order:        o,
-		Config:       c,
-		MemoryLimit:  l,
+		Config:       conf,
+		Order:        ord,
+		MemoryLimit:  lim,
 	}
 }
 
-// gets chat history; creates if none
 func GetChatHistory(botHistory BotHistory, id int64) ChatHistory {
 	if _, ok := botHistory[id]; !ok {
 		botHistory[id] = make(ChatHistory)
@@ -49,7 +46,6 @@ func GetChatHistory(botHistory BotHistory, id int64) ChatHistory {
 	return chatHistory
 }
 
-// gets bot history in any case; creates if none
 func GetBotHistory(history History, botName string) BotHistory {
 	if _, ok := history[botName]; !ok {
 		history[botName] = make(BotHistory)
@@ -58,67 +54,75 @@ func GetBotHistory(history History, botName string) BotHistory {
 	return botHistory
 }
 
-// converts message to string with conditions
-func toString(bot *tg.BotAPI, msg *tg.Message, order string) string {
+func ToLine(bot *tg.BotAPI, msg *tg.Message, order string) string {
 	var result string
 
-	// get text if any; no text -> empty string
+	// get text if any; none -> empty line
 	text, ok := messaging.GetMsgText(msg)
 	if !ok {
 		return ""
 	}
 
-	// replace bot username to the first name
-	botName, botFirstName := bot.Self.UserName, bot.Self.FirstName
-	text = strings.Replace(text, "@"+botName, botFirstName+",", -1)
+	// replace bot user name mention to first name addressing in text
+	text = messaging.HumanizeBotMention(text, &bot.Self)
 
-	// strip order if any; avoid dialog structure
+	// strip order if any -> text; none -> full line with capitalized name;
 	if order != "" {
 		text = strings.Replace(text, order, "", -1)
 		result = text
-		// contruct dialog
 	} else {
-		userName := messaging.GetUserName(msg)
+		userName := messaging.GetUserName(msg, true)
 		result = userName + ": " + text
 	}
+
 
 	return result
 }
 
 // adds message content to chat's info history
-func Add(tgInfo *messaging.TgInfo, chatInfo *ChatInfo) (string, string) {
+func Add(tgInfo *messaging.TgInfo, chatInfo *ChatInfo, mu *sync.RWMutex) []string {
+	mu.Lock()
+	defer mu.Unlock()
+
+	// get bot, message and order for line formatting
 	bot, msg := tgInfo.Bot, tgInfo.Msg
-	chatHistory, order := chatInfo.ChatsHistory, chatInfo.Order
+	order := chatInfo.Order
 
-	// get related lines
-	prevLine := toString(bot, msg.ReplyToMessage, order)
-	lastLine := toString(bot, msg, order)
+	// get chat history for adding to it
+	chatHistory := chatInfo.ChatsHistory
 
-	// add related lines to history if got both
-	if prevLine != "" { // lastLine non-empty (message checked)
+	// format two inversed lines
+	lastLine := ToLine(bot, msg, order)
+	prevLine := ToLine(bot, msg.ReplyToMessage, order)
+
+	// lastLine non-empty (as line of valid message)
+	lines := []string{lastLine}
+	// prevLine empty check -> add if inversed pair to history; skip
+	if prevLine != "" {
 		chatHistory[lastLine] = MessageEntry{
 			Message:   prevLine,
 			Timestamp: time.Now(),
 		}
+		lines = append(lines, prevLine)
 	}
 
-	return prevLine, lastLine
+	return lines
 }
 
 // gets dialog from chat's info history
-func Get(prevLine string, lastLine string, chatInfo *ChatInfo) []string {
+func Get(lines []string, chatInfo *ChatInfo, mu *sync.RWMutex) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	// get two inversed lines (non-empty as checked)
+	lastLine := lines[0]
+	prevLine := lines[1]
+
+	// get chat history and memory limit for backward dialog assembling
 	chatHistory := chatInfo.ChatsHistory
 	memLim := chatInfo.MemoryLimit
 
-	// append last line (and return if needed)
-	lines := []string{lastLine}
-	if prevLine == "" { // lastLine non-empty (message checked)
-		return lines
-	}
-	// append previous line
-	lines = append(lines, prevLine)
-
-	// append previous lines
+	// accumulate inversed lines going backwards in history via reply chain
 	lastLine = prevLine
 	for i := 0; i < memLim-2; i++ {
 		if messageEntry, ok := chatHistory[lastLine]; ok {
@@ -132,7 +136,7 @@ func Get(prevLine string, lastLine string, chatInfo *ChatInfo) []string {
 		}
 	}
 
-	// reverse the lines to get a dialog
+	// reverse inversed lines to get a dialog
 	reverse := func(lines []string) []string {
 		for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
 			lines[i], lines[j] = lines[j], lines[i]
@@ -144,28 +148,7 @@ func Get(prevLine string, lastLine string, chatInfo *ChatInfo) []string {
 	return dialog
 }
 
-// cleans all day old lines in every chat history
-func CleanHistory(history History) {
-	currentTime := time.Now()
-
-	for _, botHistory := range history {
-		for _, chatHistory := range botHistory {
-			var linesToDelete []string
-
-			for line, messageEntry := range chatHistory {
-				if currentTime.Sub(messageEntry.Timestamp) > 24*time.Hour {
-					linesToDelete = append(linesToDelete, line)
-				}
-			}
-
-			for _, line := range linesToDelete {
-				delete(chatHistory, line)
-			}
-		}
-	}
-}
-
-// loads history (for share use)
+// loads history (for shared use)
 func LoadHistory(source string) History {
 	var history History
 
@@ -176,13 +159,13 @@ func LoadHistory(source string) History {
 	}
 	defer file.Close()
 
-	// read file
+	// read JSON data from file
 	data, err := os.ReadFile(source)
 	if err != nil {
 		panic(fmt.Errorf("[OS error] History reading: %v", err))
 	}
 
-	// decode JSON to history
+	// decode JSON data to history
 	err = json.Unmarshal(data, &history)
 	if err != nil {
 		log.Println("[OS] History will be created")
@@ -195,7 +178,7 @@ func LoadHistory(source string) History {
 }
 
 // saves history with mutex locking
-func SaveHistory(dest string, history History, mu *sync.Mutex) {
+func SaveHistory(dest string, history History, mu *sync.RWMutex) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -206,7 +189,7 @@ func SaveHistory(dest string, history History, mu *sync.Mutex) {
 	}
 	defer file.Close()
 
-	// encode history into JSON
+	// encode history to JSON data
 	data, err := json.Marshal(history)
 	if err != nil {
 		panic(fmt.Errorf("[OS error] History marshalling: %v", err))
@@ -219,4 +202,28 @@ func SaveHistory(dest string, history History, mu *sync.Mutex) {
 	}
 
 	log.Println("[OS] History written")
+}
+
+// cleans all lines older than day in every chat history
+func CleanHistory(history History, mu *sync.RWMutex) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	currentTime := time.Now()
+
+	for _, botHistory := range history {
+		for _, chatHistory := range botHistory {
+			var linesToDelete []string
+
+			for line, messageEntry := range chatHistory {
+				if currentTime.Sub(messageEntry.Timestamp) > 24 * time.Hour {
+					linesToDelete = append(linesToDelete, line)
+				}
+			}
+
+			for _, line := range linesToDelete {
+				delete(chatHistory, line)
+			}
+		}
+	}
 }
