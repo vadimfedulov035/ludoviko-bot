@@ -75,7 +75,6 @@ func ToLine(bot *tg.BotAPI, msg *tg.Message, order string) string {
 		result = userName + ": " + text
 	}
 
-
 	return result
 }
 
@@ -216,7 +215,7 @@ func CleanHistory(history History, mu *sync.RWMutex) {
 			var linesToDelete []string
 
 			for line, messageEntry := range chatHistory {
-				if currentTime.Sub(messageEntry.Timestamp) > 24 * time.Hour {
+				if currentTime.Sub(messageEntry.Timestamp) > 24*time.Hour {
 					linesToDelete = append(linesToDelete, line)
 				}
 			}

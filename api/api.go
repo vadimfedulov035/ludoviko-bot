@@ -26,8 +26,8 @@ type Settings struct {
 	DynamicTokenShift int `json:"dynamic_token_shift"`
 	RateTokens        int `json:"rate_tokens"`
 
-	RespBatchSize     int `json:"resp_batch_size"`
-	RateBatchNum      int `json:"rate_batch_num"`
+	RespBatchSize int `json:"resp_batch_size"`
+	RateBatchNum  int `json:"rate_batch_num"`
 }
 
 type RequestBody struct {
