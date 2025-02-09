@@ -17,81 +17,131 @@ import (
 type TgInfo struct {
 	Bot *tg.BotAPI
 	Msg *tg.Message
-	CID int64
+	Sender string
+	Text string
 }
 
-func NewTgInfo(bot *tg.BotAPI, msg *tg.Message, cid int64) *TgInfo {
+func NewTgInfo(bot *tg.BotAPI, msg *tg.Message) *TgInfo {
+	if msg == nil {
+		return nil
+	}
 	return &TgInfo{
 		Bot: bot,
 		Msg: msg,
-		CID: cid,
+		Sender: getName(msg, true),
+		Text: getText(msg),
 	}
 }
 
-// transforms general config to the custome one
-func GetCustomConfig(generalConfig string, order string) string {
-	configPostfix := strings.Replace(order, "/", "_", 1)
-	customConfig := fmt.Sprintf(generalConfig, configPostfix)
-	return customConfig
+type ChatInfo struct {
+	TgInfo
+	Lines []string
+	CID int64
+	ChatTitle string
+	Config string
+	Order string
+	MemLim int
 }
 
-// gets message text if any, sets ok flag
-func GetMsgText(msg *tg.Message) (string, bool) {
+func NewChatInfo(t *TgInfo, conf string, orders []string, lim int) *ChatInfo {
+	bot, msg, sender, text := t.Bot, t.Msg, t.Sender, t.Text
+	text = humanizeBotMention(text, &bot.Self)
+
+	cid := getCID(msg)
+	chatTitle := getChatTitle(msg, sender)
+	order := getOrder(text, orders)
+	config := getOrderConfig(conf, order)
+
+	// get last line
+	lastLine := toLine(text, sender, order)
+	// get previous line (no order, as it's about stateless communication)
+	var prevLine string
+	if msg.ReplyToMessage != nil {
+		temp := NewTgInfo(bot, msg.ReplyToMessage)
+		prevLine = toLine(temp.Text, temp.Sender, "")
+	} else {
+		prevLine = ""
+	}
+
+	chatInfo := &ChatInfo{
+		TgInfo: *t,
+		Lines: []string{lastLine, prevLine},
+		CID: cid,
+		ChatTitle: chatTitle,
+		Config: config,
+		Order: order,
+		MemLim: lim,
+	}
+
+	return chatInfo
+}
+
+func toLine(text string, name string, order string) string {
+	var result string
+
+	// empty text -> empty line
+	if text == "" {
+		return ""
+	}
+
+	// strip order if any, return text OR get name, return "Name: text" line
+	if order != "" {
+		text = strings.Replace(text, order, "", -1)
+		result = text
+	} else {
+		result = name + ": " + text
+	}
+
+	return result
+}
+
+func getText(msg *tg.Message) string {
 	if msg == nil {
-		return "", false
+		return ""
 	}
 	if msg.Text != "" {
-		return msg.Text, true
+		return msg.Text
 	}
 	if msg.Caption != "" {
-		return msg.Caption, true
+		return msg.Caption
 	}
-	return "", false
+	return ""
 }
 
 // substitutes bot's user name mention to bot's first name addressing in text
-func HumanizeBotMention(text string, self *tg.User) string {
+func humanizeBotMention(text string, self *tg.User) string {
 	botName, botFirstName := self.UserName, self.FirstName
 	text = strings.Replace(text, "@"+botName, botFirstName+",", -1)
 	return text
 }
 
 // gets name if any; or sets "anonymous"
-func GetUserName(msg *tg.Message, capitalize bool) string {
-	var userName string
+func getName(msg *tg.Message, capitalize bool) string {
+	var name string
 
 	// bot -> first name, user -> user name
 	if msg.From.IsBot {
-		userName = msg.From.FirstName
+		name = msg.From.FirstName
 	} else {
-		userName = msg.From.UserName
+		name = msg.From.UserName
 	}
 
 	// hidden user -> anonymous
-	if userName == "" {
-		userName = "anonymous"
+	if name == "" {
+		name = "anonymous"
 	}
 
 	// capitalize if asked
 	if capitalize {
 		caser := cases.Title(language.English)
-		userName = caser.String(userName)
+		name = caser.String(name)
 	}
 
-	return userName
+	return name
 }
 
-// gets chat title if any; or sets "User's chat"
-func GetChatTitle(msg *tg.Message) string {
-	chatName := msg.Chat.Title
-	if chatName == "" {
-		chatName = fmt.Sprintf("%s's chat", GetUserName(msg, true))
-	}
-	return chatName
-}
-
-// gets Chat ID or User ID as private Chat ID
-func GetCID(msg *tg.Message) int64 {
+// gets Chat ID for public and private chats
+func getCID(msg *tg.Message) int64 {
 	var cid int64
 	if msg.Chat != nil {
 		cid = msg.Chat.ID
@@ -99,6 +149,15 @@ func GetCID(msg *tg.Message) int64 {
 		cid = msg.From.ID
 	}
 	return cid
+}
+
+// gets chat title if any; or sets "User's chat"
+func getChatTitle(msg *tg.Message, name string) string {
+	chatName := msg.Chat.Title
+	if chatName == "" {
+		chatName = fmt.Sprintf("%s's chat", name)
+	}
+	return chatName
 }
 
 // gets order if any
@@ -112,15 +171,26 @@ func getOrder(text string, orders []string) string {
 	return order
 }
 
-// checks if the bot is asked; gets order if any
-func Inspect(tgInfo *TgInfo, admins []string, orders []string) (bool, string) {
-	bot, msg := tgInfo.Bot, tgInfo.Msg
+// adds order to bot config as postfix to specify order config
+func getOrderConfig(botConfig string, order string) string {
+	configPostfix := strings.Replace(order, "/", "_", 1)
+	msgConfig := fmt.Sprintf(botConfig, configPostfix)
+	return msgConfig
+}
 
+// checks if bot is asked; gets order if any
+func Inspect(c *ChatInfo, admins []string) bool {
+	bot, msg, text, order := c.Bot, c.Msg, c.Text, c.Order
+
+	// get chat variable
+	chat := msg.Chat
+
+	// get bot's user name and ID
 	self := bot.Self
 	botName, botID := self.UserName, self.ID
 
-	chat := msg.Chat
-	text, _ := GetMsgText(msg)
+	// get user's user name for correct admin check
+	userName := getName(msg, false)
 
 	// get replied message if any for reply check
 	replied := msg.ReplyToMessage
@@ -128,10 +198,6 @@ func Inspect(tgInfo *TgInfo, admins []string, orders []string) (bool, string) {
 	if replied != nil {
 		repliedID = replied.From.ID
 	}
-	// get order for order check
-	order := getOrder(text, orders)
-	// get uncaptialized user name for correct admin check
-	userName := GetUserName(msg, false)
 
 	// chat status
 	isPublic := chat.IsGroup() || chat.IsSuperGroup()
@@ -150,14 +216,14 @@ func Inspect(tgInfo *TgInfo, admins []string, orders []string) (bool, string) {
 	// bot ask status
 	isAsked := isAskedPublicly || isAskedPrivately
 
-	return isAsked, order
+	return isAsked
 }
 
 // tries to reply the message with text; sends separate message on failure
-func Reply(tgInfo *TgInfo, text string) *tg.Message {
-	bot, msg := tgInfo.Bot, tgInfo.Msg
+func Reply(c *ChatInfo, text string) *tg.Message {
+	bot, msg, cid := c.Bot, c.Msg, c.CID
 
-	msgConf := tg.NewMessage(msg.Chat.ID, text)
+	msgConf := tg.NewMessage(cid, text)
 	msgConf.ReplyToMessageID = msg.MessageID
 
 	response, err := bot.Send(msgConf)
@@ -173,8 +239,8 @@ func Reply(tgInfo *TgInfo, text string) *tg.Message {
 }
 
 // types every 3 seconds until context done
-func Typing(ctx context.Context, tgInfo *TgInfo) {
-	bot, cid := tgInfo.Bot, tgInfo.CID
+func Typing(ctx context.Context, c *ChatInfo) {
+	bot, cid := c.Bot, c.CID
 	t := time.NewTicker(3 * time.Second)
 	defer t.Stop()
 

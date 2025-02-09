@@ -44,29 +44,26 @@ func loadInitJSON(config string) *InitJSON {
 	return &initJSON
 }
 
-func reply(tgInfo *messaging.TgInfo, chatInfo *memory.ChatInfo, mu *sync.RWMutex) {
+func reply(c *messaging.ChatInfo, history memory.ChatHistory, mu *sync.RWMutex) {
 	// type until reply
 	ctx, cancel := context.WithCancel(context.Background())
-	go messaging.Typing(ctx, tgInfo)
+	go messaging.Typing(ctx, c)
 	defer cancel()
 
 	var dialog []string
-	// add message pair to history if replied message exists, return as lines
-	lines := memory.Add(tgInfo, chatInfo, mu)
-	// get dialog going backwards in history via reply chain (2 lines)
-	if len(lines) > 1 {
-		dialog = memory.Get(lines, chatInfo, mu)
-	} else {
-		dialog = lines // else dialog is a new chain message (1 line)
-	}
+	// add message pair to history if replied message exists
+	memory.Add(c, history, mu)
+	// get dialog by going backwards in history via reply chain (2 lines)
+	// else dialog is a new chain message (1 line)
+	dialog = memory.Get(c, history, mu)
 
 	// send dialog to API and reply with received text
-	text := api.Send(dialog, chatInfo.Config, tgInfo.Msg.Chat.Title)
-	resp := messaging.Reply(tgInfo, text)
+	text := api.Send(dialog, c.Config, c.ChatTitle)
+	resp := messaging.Reply(c, text)
 
 	// add response pair to history
-	tgInfo.Msg = resp
-	memory.Add(tgInfo, chatInfo, mu)
+	c.Msg = resp
+	memory.Add(c, history, mu)
 }
 
 func start(i int, initJSON *InitJSON, history memory.History, mu *sync.RWMutex) {
@@ -89,7 +86,7 @@ func start(i int, initJSON *InitJSON, history memory.History, mu *sync.RWMutex) 
 
 	// get general history and config variables
 	BotHistory := memory.GetBotHistory(history, botName)
-	Config := filepath.Join(ConfigPath, botName+"%s.json")
+	BotConfig := filepath.Join(ConfigPath, botName+"%s.json")
 
 	// start update channel
 	u := tg.NewUpdate(0)
@@ -98,30 +95,25 @@ func start(i int, initJSON *InitJSON, history memory.History, mu *sync.RWMutex) 
 	for update := range updates {
 		msg := update.Message
 
-		// check if message is valid
-		_, ok := messaging.GetMsgText(msg)
-		if !ok {
+		// check if message is valid (via tgInfo)
+		tgInfo := messaging.NewTgInfo(bot, msg)
+		if tgInfo == nil || tgInfo.Text == "" {
 			continue
 		}
 
-		// get Chat ID -> tgInfo
-		cid := messaging.GetCID(msg)
-		tgInfo := messaging.NewTgInfo(bot, msg, cid)
-
-		// check if message is to current bot, log success
-		isAsked, order := messaging.Inspect(tgInfo, Admins, Orders)
+		// check if message is to current bot (via ChatInfo)
+		chatInfo := messaging.NewChatInfo(tgInfo, BotConfig, Orders, MemLim)
+		isAsked := messaging.Inspect(chatInfo, Admins)
 		if !isAsked {
 			continue
 		}
 		log.Printf("%s got message", botName)
 
-		// get chat history, custom bot config -> chatInfo
-		chatHistory := memory.GetChatHistory(BotHistory, cid)
-		config := messaging.GetCustomConfig(Config, order)
-		chatInfo := memory.NewChatInfo(chatHistory, config, order, MemLim)
+		// get chat history (via ChatInfo)
+		chatHistory := memory.GetChatHistory(BotHistory, chatInfo.CID)
 
 		// reply with all info
-		reply(tgInfo, chatInfo, mu)
+		reply(chatInfo, chatHistory, mu)
 
 		// clean and save history
 		memory.CleanHistory(history, mu)

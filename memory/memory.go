@@ -5,38 +5,19 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"sync"
 	"time"
-
-	tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"tg-handler/messaging"
 )
 
 type MessageEntry struct {
-	Message   string    `json:"msg"`
+	Line      string    `json:"msg"`
 	Timestamp time.Time `json:"ts"`
 }
 type ChatHistory map[string]MessageEntry
 type BotHistory map[int64]ChatHistory
 type History map[string]BotHistory
-
-type ChatInfo struct {
-	ChatsHistory ChatHistory
-	Config       string
-	Order        string
-	MemoryLimit  int
-}
-
-func NewChatInfo(h ChatHistory, conf string, ord string, lim int) *ChatInfo {
-	return &ChatInfo{
-		ChatsHistory: h,
-		Config:       conf,
-		Order:        ord,
-		MemoryLimit:  lim,
-	}
-}
 
 func GetChatHistory(botHistory BotHistory, id int64) ChatHistory {
 	if _, ok := botHistory[id]; !ok {
@@ -54,80 +35,45 @@ func GetBotHistory(history History, botName string) BotHistory {
 	return botHistory
 }
 
-func ToLine(bot *tg.BotAPI, msg *tg.Message, order string) string {
-	var result string
-
-	// get text if any; none -> empty line
-	text, ok := messaging.GetMsgText(msg)
-	if !ok {
-		return ""
-	}
-
-	// replace bot user name mention to first name addressing in text
-	text = messaging.HumanizeBotMention(text, &bot.Self)
-
-	// strip order if any -> text; none -> full line with capitalized name;
-	if order != "" {
-		text = strings.Replace(text, order, "", -1)
-		result = text
-	} else {
-		userName := messaging.GetUserName(msg, true)
-		result = userName + ": " + text
-	}
-
-	return result
-}
-
-// adds message content to chat's info history
-func Add(tgInfo *messaging.TgInfo, chatInfo *ChatInfo, mu *sync.RWMutex) []string {
+// adds chain to chat history
+func Add(c *messaging.ChatInfo, history ChatHistory, mu *sync.RWMutex) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// get bot, message and order for line formatting
-	bot, msg := tgInfo.Bot, tgInfo.Msg
-	order := chatInfo.Order
-
-	// get chat history for adding to it
-	chatHistory := chatInfo.ChatsHistory
-
-	// format two inversed lines
-	lastLine := ToLine(bot, msg, order)
-	prevLine := ToLine(bot, msg.ReplyToMessage, order)
-
-	// lastLine non-empty (as line of valid message)
-	lines := []string{lastLine}
-	// prevLine empty check -> add if inversed pair to history; skip
-	if prevLine != "" {
-		chatHistory[lastLine] = MessageEntry{
-			Message:   prevLine,
-			Timestamp: time.Now(),
-		}
-		lines = append(lines, prevLine)
-	}
-
-	return lines
-}
-
-// gets dialog from chat's info history
-func Get(lines []string, chatInfo *ChatInfo, mu *sync.RWMutex) []string {
-	mu.RLock()
-	defer mu.RUnlock()
-
-	// get two inversed lines (non-empty as checked)
+	// get two inversed lines
+	lines := c.Lines
 	lastLine := lines[0]
 	prevLine := lines[1]
 
-	// get chat history and memory limit for backward dialog assembling
-	chatHistory := chatInfo.ChatsHistory
-	memLim := chatInfo.MemoryLimit
+	// add inversed lines to chat history
+	if prevLine != "" {  // lastLine non-empty (goes from non-empty message)
+		history[lastLine] = MessageEntry{
+			Line:   prevLine,
+			Timestamp: time.Now(),
+		}
+	}
+}
+
+// gets dialog from chat's info history
+func Get(c *messaging.ChatInfo, history ChatHistory, mu *sync.RWMutex) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	// get two inversed lines (both non-empty)
+	lines := c.Lines
+	lastLine := lines[0]
+	prevLine := lines[1]
+
+	// get memory limit for backward dialog assembling
+	memLim := c.MemLim
 
 	// accumulate inversed lines going backwards in history via reply chain
 	lastLine = prevLine
 	for i := 0; i < memLim-2; i++ {
-		if messageEntry, ok := chatHistory[lastLine]; ok {
+		if messageEntry, ok := history[lastLine]; ok {
 			log.Printf("%d messages remembered", i+1)
 
-			prevLine = messageEntry.Message
+			prevLine = messageEntry.Line
 			lines = append(lines, prevLine)
 			lastLine = prevLine
 		} else {

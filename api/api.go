@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const API = "http://0.0.0.0:8000/api/chat"
+const API = "http://llm-server:8000/api/chat"
 
 type Settings struct {
 	SystemPrompt string   `json:"system_prompt"`
@@ -26,8 +26,8 @@ type Settings struct {
 	DynamicTokenShift int `json:"dynamic_token_shift"`
 	RateTokens        int `json:"rate_tokens"`
 
-	RespBatchSize int `json:"resp_batch_size"`
-	RateBatchNum  int `json:"rate_batch_num"`
+	RespBatchSize  int `json:"resp_batch_size"`
+	RateBatchSize  int `json:"rate_batch_size"`
 }
 
 type RequestBody struct {
