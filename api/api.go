@@ -8,9 +8,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
-const API = "http://llm-server:8000/api/chat"
+const (
+	API = "http://0.0.0.0:8000/api/chat"
+	MAX_API_SEND_TRY = 3
+)
 
 type Settings struct {
 	SystemPrompt string   `json:"system_prompt"`
@@ -99,7 +103,7 @@ func sendRequestBody(requestBody *RequestBody) (string, error) {
 }
 
 // outer handler for request
-func Send(dialog []string, config string, chatTitle string) string {
+func Send(dialog []string, config string, chatTitle string) (string, error) {
 	// prepare request body
 	requestBody := newRequestBody(dialog, config)
 
@@ -111,10 +115,16 @@ func Send(dialog []string, config string, chatTitle string) string {
 	requestBody.Settings.SystemPrompt = prompt
 
 	// send request body
-	text, err := sendRequestBody(requestBody)
-	if err != nil {
-		log.Printf("[API] Sending: %v", err)
+	var text string
+	var err error
+	for i := range(MAX_API_SEND_TRY) {
+		text, err = sendRequestBody(requestBody)
+		if err == nil {
+			break
+		}
+		log.Printf("[API] Try %d: %v", i, err)
+		time.Sleep(time.Second)
 	}
 
-	return text
+	return text, err
 }

@@ -50,20 +50,24 @@ func reply(c *messaging.ChatInfo, history memory.ChatHistory, mu *sync.RWMutex) 
 	go messaging.Typing(ctx, c)
 	defer cancel()
 
-	var dialog []string
-	// add message pair to history if replied message exists
-	memory.Add(c, history, mu)
-	// get dialog by going backwards in history via reply chain (2 lines)
-	// else dialog is a new chain message (1 line)
-	dialog = memory.Get(c, history, mu)
+	// add old message pair to history as lines
+	lines := memory.NewLines(c, "")
+	memory.Add(lines, history, mu)
+
+	// get dialog
+	dialog := memory.Get(lines, history, c.MemLim, mu)
 
 	// send dialog to API and reply with received text
-	text := api.Send(dialog, c.Config, c.ChatTitle)
+	text, err := api.Send(dialog, c.Config, c.ChatTitle)
+	if err != nil {
+		return
+	}
 	resp := messaging.Reply(c, text)
 
-	// add response pair to history
-	c.Msg = resp
-	memory.Add(c, history, mu)
+	// add new message pair to history as lines
+	m := messaging.NewMsgInfo(c.Bot, resp)
+	lines = memory.NewLines(m, "")
+	memory.Add(lines, history, mu)
 }
 
 func start(i int, initJSON *InitJSON, history memory.History, mu *sync.RWMutex) {
@@ -77,14 +81,14 @@ func start(i int, initJSON *InitJSON, history memory.History, mu *sync.RWMutex) 
 	botName := bot.Self.UserName
 	log.Printf("Authorized on account %s", botName)
 
-	// get general constants
+	// get initially specified constants
 	Admins := initJSON.Admins
 	Orders := initJSON.Orders[botName]
 	MemLim := initJSON.MemoryLimit
 	HistoryPath := initJSON.HistoryPath
 	ConfigPath := initJSON.ConfigPath
 
-	// get general history and config variables
+	// get bot history and config
 	BotHistory := memory.GetBotHistory(history, botName)
 	BotConfig := filepath.Join(ConfigPath, botName+"%s.json")
 
@@ -96,7 +100,7 @@ func start(i int, initJSON *InitJSON, history memory.History, mu *sync.RWMutex) 
 		msg := update.Message
 
 		// check if message is valid (via tgInfo)
-		tgInfo := messaging.NewTgInfo(bot, msg)
+		tgInfo := messaging.NewMsgInfo(bot, msg)
 		if tgInfo == nil || tgInfo.Text == "" {
 			continue
 		}

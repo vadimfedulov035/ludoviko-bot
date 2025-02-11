@@ -14,18 +14,20 @@ import (
 	tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-type TgInfo struct {
+// minimal message info
+type MsgInfo struct {
 	Bot *tg.BotAPI
 	Msg *tg.Message
 	Sender string
 	Text string
 }
 
-func NewTgInfo(bot *tg.BotAPI, msg *tg.Message) *TgInfo {
+// minimal message info constructor
+func NewMsgInfo(bot *tg.BotAPI, msg *tg.Message) *MsgInfo {
 	if msg == nil {
 		return nil
 	}
-	return &TgInfo{
+	return &MsgInfo{
 		Bot: bot,
 		Msg: msg,
 		Sender: getName(msg, true),
@@ -33,18 +35,25 @@ func NewTgInfo(bot *tg.BotAPI, msg *tg.Message) *TgInfo {
 	}
 }
 
+// minimal message info methods for line provider interface in memory module
+func (m *MsgInfo) GetBot() *tg.BotAPI { return m.Bot }
+func (m *MsgInfo) GetMsg() *tg.Message { return m.Msg }
+func (m *MsgInfo) GetText() string { return m.Text }
+func (m *MsgInfo) GetSender() string { return m.Sender }
+
+// full chat info
 type ChatInfo struct {
-	TgInfo
-	Lines []string
+	MsgInfo
 	CID int64
 	ChatTitle string
-	Config string
 	Order string
+	Config string
 	MemLim int
 }
 
-func NewChatInfo(t *TgInfo, conf string, orders []string, lim int) *ChatInfo {
-	bot, msg, sender, text := t.Bot, t.Msg, t.Sender, t.Text
+// full chat info constructor 
+func NewChatInfo(m *MsgInfo, conf string, orders []string, lim int) *ChatInfo {
+	bot, msg, text, sender := m.Bot, m.Msg, m.Text, m.Sender
 	text = humanizeBotMention(text, &bot.Self)
 
 	cid := getCID(msg)
@@ -52,49 +61,19 @@ func NewChatInfo(t *TgInfo, conf string, orders []string, lim int) *ChatInfo {
 	order := getOrder(text, orders)
 	config := getOrderConfig(conf, order)
 
-	// get last line
-	lastLine := toLine(text, sender, order)
-	// get previous line (no order, as it's about stateless communication)
-	var prevLine string
-	if msg.ReplyToMessage != nil {
-		temp := NewTgInfo(bot, msg.ReplyToMessage)
-		prevLine = toLine(temp.Text, temp.Sender, "")
-	} else {
-		prevLine = ""
-	}
-
 	chatInfo := &ChatInfo{
-		TgInfo: *t,
-		Lines: []string{lastLine, prevLine},
+		MsgInfo: *m,
 		CID: cid,
 		ChatTitle: chatTitle,
-		Config: config,
 		Order: order,
+		Config: config,
 		MemLim: lim,
 	}
 
 	return chatInfo
 }
 
-func toLine(text string, name string, order string) string {
-	var result string
-
-	// empty text -> empty line
-	if text == "" {
-		return ""
-	}
-
-	// strip order if any, return text OR get name, return "Name: text" line
-	if order != "" {
-		text = strings.Replace(text, order, "", -1)
-		result = text
-	} else {
-		result = name + ": " + text
-	}
-
-	return result
-}
-
+// get any text from message
 func getText(msg *tg.Message) string {
 	if msg == nil {
 		return ""
@@ -106,13 +85,6 @@ func getText(msg *tg.Message) string {
 		return msg.Caption
 	}
 	return ""
-}
-
-// substitutes bot's user name mention to bot's first name addressing in text
-func humanizeBotMention(text string, self *tg.User) string {
-	botName, botFirstName := self.UserName, self.FirstName
-	text = strings.Replace(text, "@"+botName, botFirstName+",", -1)
-	return text
 }
 
 // gets name if any; or sets "anonymous"
@@ -138,6 +110,13 @@ func getName(msg *tg.Message, capitalize bool) string {
 	}
 
 	return name
+}
+
+// substitutes bot's user name mention to bot's first name addressing in text
+func humanizeBotMention(text string, self *tg.User) string {
+	botName, botFirstName := self.UserName, self.FirstName
+	text = strings.Replace(text, "@"+botName, botFirstName+",", -1)
+	return text
 }
 
 // gets Chat ID for public and private chats

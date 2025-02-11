@@ -7,9 +7,21 @@ import (
 	"os"
 	"sync"
 	"time"
+	"strings"
+
+	tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"tg-handler/messaging"
 )
+
+
+// common interface for message and chat info structs
+type LineProvider interface {
+    GetBot() *tg.BotAPI
+    GetMsg() *tg.Message
+    GetText() string
+    GetSender() string
+}
 
 type MessageEntry struct {
 	Line      string    `json:"msg"`
@@ -35,37 +47,88 @@ func GetBotHistory(history History, botName string) BotHistory {
 	return botHistory
 }
 
-// adds chain to chat history
-func Add(c *messaging.ChatInfo, history ChatHistory, mu *sync.RWMutex) {
+func toLine(text string, name string, order string) string {
+	var result string
+
+	// empty text -> empty line
+	if text == "" {
+		return ""
+	}
+
+	// strip order if any, return text OR get name, return "Name: text" line
+	if order != "" {
+		text = strings.Replace(text, order, "", -1)
+		result = text
+	} else {
+		result = name + ": " + text
+	}
+
+	return result
+}
+
+// get new lines via common interface for message and chat info
+func NewLines(m LineProvider, order string) []string {
+	bot, msg := m.GetBot(), m.GetMsg()
+	text, sender := m.GetText(), m.GetSender()
+
+	// make lines with last line
+	lastLine := toLine(text, sender, order)
+	lines := []string{lastLine}
+
+	// got no previous message to convert to line
+	if msg.ReplyToMessage == nil {
+		return lines
+	}
+
+	// get previous line
+	m = messaging.NewMsgInfo(bot, msg.ReplyToMessage)
+	prevLine := toLine(m.GetText(), m.GetSender(), "")
+
+	// got no previous line
+	if prevLine == "" {
+		return lines
+	}
+
+	// add previous line to lines
+	lines = append(lines, prevLine)
+
+	return lines
+}
+
+// adds lines pair to chat history
+func Add(lines []string, history ChatHistory, mu *sync.RWMutex) {
 	mu.Lock()
 	defer mu.Unlock()
 
+	// got no pair to add
+	if len(lines) < 2 {
+		return
+	}
+
 	// get two inversed lines
-	lines := c.Lines
 	lastLine := lines[0]
 	prevLine := lines[1]
 
 	// add inversed lines to chat history
-	if prevLine != "" {  // lastLine non-empty (goes from non-empty message)
-		history[lastLine] = MessageEntry{
-			Line:   prevLine,
-			Timestamp: time.Now(),
-		}
+	history[lastLine] = MessageEntry{
+		Line:   prevLine,
+		Timestamp: time.Now(),
 	}
 }
 
-// gets dialog from chat's info history
-func Get(c *messaging.ChatInfo, history ChatHistory, mu *sync.RWMutex) []string {
+// gets dialog from chat history
+func Get(lines []string, history ChatHistory, memLim int, mu *sync.RWMutex) []string {
 	mu.RLock()
 	defer mu.RUnlock()
 
-	// get two inversed lines (both non-empty)
-	lines := c.Lines
+	// got no pair to decipher
+	if len(lines) < 2 {
+		return lines
+	}
+
+	// get two inversed lines
 	lastLine := lines[0]
 	prevLine := lines[1]
-
-	// get memory limit for backward dialog assembling
-	memLim := c.MemLim
 
 	// accumulate inversed lines going backwards in history via reply chain
 	lastLine = prevLine
