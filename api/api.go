@@ -123,7 +123,7 @@ func Send(dialog []string, config string, chatTitle string) (string, error) {
 			break
 		}
 		log.Printf("[API] Try %d: %v", i, err)
-		time.Sleep(time.Second)
+		time.Sleep(5 * time.Second)
 	}
 
 	return text, err

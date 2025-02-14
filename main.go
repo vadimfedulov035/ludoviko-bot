@@ -50,24 +50,21 @@ func reply(c *messaging.ChatInfo, history memory.ChatHistory, mu *sync.RWMutex) 
 	go messaging.Typing(ctx, c)
 	defer cancel()
 
-	// add old message pair to history as lines
-	lines := memory.NewLines(c, "")
-	memory.Add(lines, history, mu)
+	// add old message pair to history, get it (both: interfaces)
+	m := messaging.NewMsgInfo(c.Bot, c.Msg.ReplyToMessage)
+	lines := memory.Add([2]memory.Liner{c, m}, "", history, mu)
 
-	// get dialog
+	// get dialog, send to API and reply
 	dialog := memory.Get(lines, history, c.MemLim, mu)
-
-	// send dialog to API and reply with received text
 	text, err := api.Send(dialog, c.Config, c.ChatTitle)
 	if err != nil {
 		return
 	}
 	resp := messaging.Reply(c, text)
 
-	// add new message pair to history as lines
-	m := messaging.NewMsgInfo(c.Bot, resp)
-	lines = memory.NewLines(m, "")
-	memory.Add(lines, history, mu)
+	// add new message pair to history (last: interface, previous: reused)
+	m = messaging.NewMsgInfo(c.Bot, resp)
+	memory.Add([2]memory.Liner{m, nil}, lines[0], history, mu)
 }
 
 func start(i int, initJSON *InitJSON, history memory.History, mu *sync.RWMutex) {
@@ -99,24 +96,25 @@ func start(i int, initJSON *InitJSON, history memory.History, mu *sync.RWMutex) 
 	for update := range updates {
 		msg := update.Message
 
-		// check if message is valid (via tgInfo)
-		tgInfo := messaging.NewMsgInfo(bot, msg)
-		if tgInfo == nil || tgInfo.Text == "" {
+		// check if message is valid (via msgInfo: Bot, Msg, Text, Sender)
+		msgInfo := messaging.NewMsgInfo(bot, msg)
+		if msgInfo == nil || msgInfo.Text == "" || msgInfo.Sender == "" {
 			continue
 		}
 
-		// check if message is to current bot (via ChatInfo)
-		chatInfo := messaging.NewChatInfo(tgInfo, BotConfig, Orders, MemLim)
-		isAsked := messaging.Inspect(chatInfo, Admins)
+		// check if message is to current bot (via ReqInfo: Config, Order)
+		reqInfo := messaging.NewReqInfo(msgInfo, BotConfig, Orders)
+		isAsked := messaging.IsAsked(reqInfo, Admins)
 		if !isAsked {
 			continue
 		}
 		log.Printf("%s got message", botName)
 
-		// get chat history (via ChatInfo)
+		// get chat history (via ChatInfo: CID, ChatTitle)
+		chatInfo := messaging.NewChatInfo(reqInfo, MemLim)
 		chatHistory := memory.GetChatHistory(BotHistory, chatInfo.CID)
 
-		// reply with all info
+		// reply to message
 		reply(chatInfo, chatHistory, mu)
 
 		// clean and save history

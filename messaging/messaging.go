@@ -8,13 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
-
 	tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// minimal message info
+// message info (for validation check)
 type MsgInfo struct {
 	Bot *tg.BotAPI
 	Msg *tg.Message
@@ -22,73 +19,101 @@ type MsgInfo struct {
 	Text string
 }
 
-// minimal message info constructor
-func NewMsgInfo(bot *tg.BotAPI, msg *tg.Message) *MsgInfo {
-	if msg == nil {
-		return nil
-	}
-	return &MsgInfo{
-		Bot: bot,
-		Msg: msg,
-		Sender: getName(msg, true),
-		Text: getText(msg),
-	}
-}
-
-// minimal message info methods for line provider interface in memory module
-func (m *MsgInfo) GetBot() *tg.BotAPI { return m.Bot }
-func (m *MsgInfo) GetMsg() *tg.Message { return m.Msg }
-func (m *MsgInfo) GetText() string { return m.Text }
-func (m *MsgInfo) GetSender() string { return m.Sender }
-
-// full chat info
-type ChatInfo struct {
+// request info (for request check)
+type ReqInfo struct {
 	MsgInfo
-	CID int64
-	ChatTitle string
 	Order string
 	Config string
+}
+
+// chat info (for further operatins)
+type ChatInfo struct {
+	ReqInfo
+	CID int64
+	ChatTitle string
 	MemLim int
 }
 
-// full chat info constructor 
-func NewChatInfo(m *MsgInfo, conf string, orders []string, lim int) *ChatInfo {
-	bot, msg, text, sender := m.Bot, m.Msg, m.Text, m.Sender
-	text = humanizeBotMention(text, &bot.Self)
+// message info constructor
+func NewMsgInfo(bot *tg.BotAPI, msg *tg.Message) *MsgInfo {
+	// nil message -> nil message info
+	if msg == nil {
+		return nil
+	}
 
-	cid := getCID(msg)
-	chatTitle := getChatTitle(msg, sender)
+	return &MsgInfo{
+		Bot: bot,
+		Msg: msg,
+		Sender: getName(msg),
+		Text: getText(bot, msg),
+	}
+}
+
+// request info constructor 
+func NewReqInfo(m *MsgInfo, conf string, orders []string) *ReqInfo {
+	text := m.Text
+
+	// get order and config to set
 	order := getOrder(text, orders)
 	config := getOrderConfig(conf, order)
 
-	chatInfo := &ChatInfo{
+	return &ReqInfo{
 		MsgInfo: *m,
-		CID: cid,
-		ChatTitle: chatTitle,
 		Order: order,
 		Config: config,
-		MemLim: lim,
 	}
-
-	return chatInfo
 }
 
-// get any text from message
-func getText(msg *tg.Message) string {
+// chat info constructor
+func NewChatInfo(r *ReqInfo, memLim int) *ChatInfo {
+	// set recent message info
+	msg := r.Msg
+	sender := r.Sender
+
+	return &ChatInfo{
+		ReqInfo: *r,
+		CID: getCID(msg),
+		ChatTitle: getChatTitle(msg, sender),
+		MemLim: memLim,
+	}
+}
+
+// base getters for liner interface
+// ()
+// (chat info struct inherits redefined request info method)
+func (m *MsgInfo) GetText() string { return m.Text }
+func (m *MsgInfo) GetSender() string { return m.Sender }
+func (r *MsgInfo) GetOrder() string { return "" }
+func (r *ReqInfo) GetOrder() string { return r.Order }
+
+// get text from message (always humanized)
+func getText(bot *tg.BotAPI, msg *tg.Message) string {
 	if msg == nil {
 		return ""
 	}
+
+	// get any text
+	var text string
 	if msg.Text != "" {
-		return msg.Text
+		text = msg.Text
+	} else if msg.Caption != "" {
+		text = msg.Caption
 	}
-	if msg.Caption != "" {
-		return msg.Caption
+
+	// substitute @name_bot to BotName for humanized style
+	// both form of addressing are detectable but only humanized will be passed
+	humanize := func(text string, self *tg.User) string {
+		botName, botFirstName := self.UserName, self.FirstName
+		text = strings.Replace(text, "@"+botName, botFirstName+",", -1)
+		return text
 	}
-	return ""
+	text = humanize(text, &bot.Self)
+
+	return text
 }
 
 // gets name if any; or sets "anonymous"
-func getName(msg *tg.Message, capitalize bool) string {
+func getName(msg *tg.Message) string {
 	var name string
 
 	// bot -> first name, user -> user name
@@ -103,20 +128,7 @@ func getName(msg *tg.Message, capitalize bool) string {
 		name = "anonymous"
 	}
 
-	// capitalize if asked
-	if capitalize {
-		caser := cases.Title(language.English)
-		name = caser.String(name)
-	}
-
 	return name
-}
-
-// substitutes bot's user name mention to bot's first name addressing in text
-func humanizeBotMention(text string, self *tg.User) string {
-	botName, botFirstName := self.UserName, self.FirstName
-	text = strings.Replace(text, "@"+botName, botFirstName+",", -1)
-	return text
 }
 
 // gets Chat ID for public and private chats
@@ -157,19 +169,18 @@ func getOrderConfig(botConfig string, order string) string {
 	return msgConfig
 }
 
-// checks if bot is asked; gets order if any
-func Inspect(c *ChatInfo, admins []string) bool {
-	bot, msg, text, order := c.Bot, c.Msg, c.Text, c.Order
+// checks if bot is asked
+func IsAsked(c *ReqInfo, admins []string) bool {
+	bot, msg := c.Bot, c.Msg
+	text, sender := c.Text, c.Sender
+	order := c.Order
 
 	// get chat variable
 	chat := msg.Chat
 
-	// get bot's user name and ID
+	// get bot's first name and ID
 	self := bot.Self
-	botName, botID := self.UserName, self.ID
-
-	// get user's user name for correct admin check
-	userName := getName(msg, false)
+	botFirstName, botID := self.FirstName, self.ID
 
 	// get replied message if any for reply check
 	replied := msg.ReplyToMessage
@@ -184,9 +195,9 @@ func Inspect(c *ChatInfo, admins []string) bool {
 
 	// bot reply conditions
 	isReplied := repliedID == botID
-	isMentioned := strings.Contains(text, botName)
+	isMentioned := strings.Contains(text, botFirstName)
 	isOrdered := order != ""
-	isAdmin := slices.Contains(admins, userName)
+	isAdmin := slices.Contains(admins, sender)
 
 	// bot chat reply conditions
 	isAskedPublicly := isPublic && (isReplied || isMentioned || isOrdered)
@@ -205,11 +216,13 @@ func Reply(c *ChatInfo, text string) *tg.Message {
 	msgConf := tg.NewMessage(cid, text)
 	msgConf.ReplyToMessageID = msg.MessageID
 
+	// try to reply twice: as reply, as separate message
 	response, err := bot.Send(msgConf)
 	if err != nil {
 		msgConf.ReplyToMessageID = 0
 		response, err = bot.Send(msgConf)
 	}
+	// log final error
 	if err != nil {
 		log.Printf("[Telegram] Replying: %v", err)
 	}
@@ -220,18 +233,21 @@ func Reply(c *ChatInfo, text string) *tg.Message {
 // types every 3 seconds until context done
 func Typing(ctx context.Context, c *ChatInfo) {
 	bot, cid := c.Bot, c.CID
+
+	// set 3 second ticker
 	t := time.NewTicker(3 * time.Second)
+	// stop on loop break
 	defer t.Stop()
 
 	for {
 		select {
-		case <-t.C:
+		case <-t.C:  // send typing signal on every tick
 			actConf := tg.NewChatAction(cid, "typing")
 			_, err := bot.Request(actConf)
 			if err != nil {
 				log.Printf("[Telegram] Action: %v", err)
 			}
-		case <-ctx.Done():
+		case <-ctx.Done():  // break with return on context done
 			return
 		}
 	}

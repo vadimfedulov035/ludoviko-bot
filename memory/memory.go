@@ -8,29 +8,30 @@ import (
 	"sync"
 	"time"
 	"strings"
-
-	tg "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-
-	"tg-handler/messaging"
+	
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 
-// common interface for message and chat info structs
-type LineProvider interface {
-    GetBot() *tg.BotAPI
-    GetMsg() *tg.Message
-    GetText() string
-    GetSender() string
+// interface providing lines for memory
+type Liner interface {
+	GetText() string
+	GetSender() string
+	GetOrder() string
 }
 
+// message storing format in history
 type MessageEntry struct {
 	Line      string    `json:"msg"`
 	Timestamp time.Time `json:"ts"`
 }
+// chat history structure layers
 type ChatHistory map[string]MessageEntry
 type BotHistory map[int64]ChatHistory
 type History map[string]BotHistory
 
+// chat history getter
 func GetChatHistory(botHistory BotHistory, id int64) ChatHistory {
 	if _, ok := botHistory[id]; !ok {
 		botHistory[id] = make(ChatHistory)
@@ -39,6 +40,7 @@ func GetChatHistory(botHistory BotHistory, id int64) ChatHistory {
 	return chatHistory
 }
 
+// bot history getter
 func GetBotHistory(history History, botName string) BotHistory {
 	if _, ok := history[botName]; !ok {
 		history[botName] = make(BotHistory)
@@ -47,7 +49,8 @@ func GetBotHistory(history History, botName string) BotHistory {
 	return botHistory
 }
 
-func toLine(text string, name string, order string) string {
+// returns text as line
+func toLine(text string, sender string, order string) string {
 	var result string
 
 	// empty text -> empty line
@@ -55,54 +58,68 @@ func toLine(text string, name string, order string) string {
 		return ""
 	}
 
-	// strip order if any, return text OR get name, return "Name: text" line
+	// capitalize sender
+	capitalize := func(name string) string {
+		caser := cases.Title(language.English)
+		nameCap := caser.String(name)
+		return nameCap
+	}
+
+	// strip order from string
+	strip := func(text string, order string) string {
+		return strings.Replace(text, order, "", -1)
+	}
+
+	// order implies anonymous line "text" (stripped order)
+	// no order implies ordinary line "Name: text"
 	if order != "" {
-		text = strings.Replace(text, order, "", -1)
-		result = text
+		result = strip(text, order)
 	} else {
-		result = name + ": " + text
+		result = capitalize(sender) + ": " + text
 	}
 
 	return result
 }
 
-// get new lines via common interface for message and chat info
-func NewLines(m LineProvider, order string) []string {
-	bot, msg := m.GetBot(), m.GetMsg()
-	text, sender := m.GetText(), m.GetSender()
-
-	// make lines with last line
+// get lines via interface array or reused string
+func getLines(ls [2]Liner, prevLine string) []string {
+	// add last line to lines
+	lastL := ls[0]
+	text, sender, order := lastL.GetText(), lastL.GetSender(), lastL.GetOrder()
 	lastLine := toLine(text, sender, order)
 	lines := []string{lastLine}
 
-	// got no previous message to convert to line
-	if msg.ReplyToMessage == nil {
+	// add previous line to lines (old)
+	if prevLine != "" {
+		lines = append(lines, prevLine)
 		return lines
 	}
 
-	// get previous line
-	m = messaging.NewMsgInfo(bot, msg.ReplyToMessage)
-	prevLine := toLine(m.GetText(), m.GetSender(), "")
-
-	// got no previous line
-	if prevLine == "" {
+	// add previous line to lines (new)
+	prevL := ls[1]
+	prevText, prevSender, prevOrder := prevL.GetText(), prevL.GetSender(), ""
+	// empty text or sender -> return
+	if prevText == "" || prevSender == "" {
 		return lines
 	}
-
-	// add previous line to lines
+	// set to passed zero-string
+	prevLine = toLine(prevText, prevSender, prevOrder)
 	lines = append(lines, prevLine)
 
 	return lines
 }
 
-// adds lines pair to chat history
-func Add(lines []string, history ChatHistory, mu *sync.RWMutex) {
+// adds lines pair generated on the fly to chat history, returns lines
+func Add(ls [2]Liner, line string, history ChatHistory, mu *sync.RWMutex) []string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// got no pair to add
+	// make new or renew with passed line
+	lines := getLines(ls, line)
+
+	// got no pair to add, return
 	if len(lines) < 2 {
-		return
+		return lines
 	}
 
 	// get two inversed lines
@@ -111,9 +128,11 @@ func Add(lines []string, history ChatHistory, mu *sync.RWMutex) {
 
 	// add inversed lines to chat history
 	history[lastLine] = MessageEntry{
-		Line:   prevLine,
+		Line: prevLine,
 		Timestamp: time.Now(),
 	}
+
+	return lines
 }
 
 // gets dialog from chat history
